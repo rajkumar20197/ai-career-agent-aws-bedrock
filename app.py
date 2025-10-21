@@ -27,7 +27,7 @@ except:
     AWS_REGION = os.getenv('VITE_AWS_REGION', 'us-east-1')
     AWS_ACCESS_KEY = os.getenv('VITE_AWS_ACCESS_KEY_ID', '')
     AWS_SECRET_KEY = os.getenv('VITE_AWS_SECRET_ACCESS_KEY', '')
-    MODEL_ID = "anthropic.claude-3-5-haiku-20241022-v1:0"
+    MODEL_ID = st.secrets.get("VITE_BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
 
 # Sidebar info
 st.sidebar.header("🔧 Configuration")
@@ -62,11 +62,30 @@ def call_bedrock(prompt, max_tokens=300):
         return get_demo_response(prompt)
     
     try:
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}]
-        })
+        # Different request format based on model type
+        if "anthropic" in MODEL_ID.lower():
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}]
+            })
+        elif "nova" in MODEL_ID.lower():
+            body = json.dumps({
+                "inputText": prompt,
+                "textGenerationConfig": {
+                    "maxTokenCount": max_tokens,
+                    "temperature": 0.7
+                }
+            })
+        else:
+            # Default format for other models
+            body = json.dumps({
+                "inputText": prompt,
+                "textGenerationConfig": {
+                    "maxTokenCount": max_tokens,
+                    "temperature": 0.7
+                }
+            })
         
         response = client.invoke_model(
             modelId=MODEL_ID,
@@ -76,7 +95,20 @@ def call_bedrock(prompt, max_tokens=300):
         )
         
         response_body = json.loads(response['body'].read())
-        return response_body['content'][0]['text']
+        
+        # Different response format based on model type
+        if "anthropic" in MODEL_ID.lower():
+            return response_body['content'][0]['text']
+        elif "nova" in MODEL_ID.lower():
+            return response_body['outputText']
+        else:
+            # Try common response formats
+            if 'outputText' in response_body:
+                return response_body['outputText']
+            elif 'content' in response_body:
+                return response_body['content'][0]['text']
+            else:
+                return str(response_body)
         
     except ClientError as e:
         if 'AccessDeniedException' in str(e) or 'ValidationException' in str(e):

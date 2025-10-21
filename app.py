@@ -27,12 +27,12 @@ except:
     AWS_REGION = os.getenv('VITE_AWS_REGION', 'us-east-1')
     AWS_ACCESS_KEY = os.getenv('VITE_AWS_ACCESS_KEY_ID', '')
     AWS_SECRET_KEY = os.getenv('VITE_AWS_SECRET_ACCESS_KEY', '')
-    MODEL_ID = st.secrets.get("VITE_BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
+    MODEL_ID = st.secrets.get("VITE_BEDROCK_MODEL_ID", "amazon.titan-text-express-v1")
 
 # Sidebar info
 st.sidebar.header("🔧 Configuration")
 st.sidebar.write(f"**Region:** {AWS_REGION}")
-st.sidebar.write(f"**Model:** Claude 3.5 Haiku")
+st.sidebar.write(f"**Model:** {MODEL_ID.split('.')[-1] if '.' in MODEL_ID else MODEL_ID}")
 st.sidebar.write("**Status:** Live AWS Integration")
 
 # Check credentials
@@ -77,6 +77,15 @@ def call_bedrock(prompt, max_tokens=300):
                     "temperature": 0.7
                 }
             })
+        elif "titan" in MODEL_ID.lower():
+            body = json.dumps({
+                "inputText": prompt,
+                "textGenerationConfig": {
+                    "maxTokenCount": max_tokens,
+                    "temperature": 0.7,
+                    "topP": 0.9
+                }
+            })
         else:
             # Default format for other models
             body = json.dumps({
@@ -99,8 +108,8 @@ def call_bedrock(prompt, max_tokens=300):
         # Different response format based on model type
         if "anthropic" in MODEL_ID.lower():
             return response_body['content'][0]['text']
-        elif "nova" in MODEL_ID.lower():
-            return response_body['outputText']
+        elif "nova" in MODEL_ID.lower() or "titan" in MODEL_ID.lower():
+            return response_body['results'][0]['outputText']
         else:
             # Try common response formats
             if 'outputText' in response_body:

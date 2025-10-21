@@ -1,0 +1,407 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Career Agent Platform - Complete Serverless Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-5-haiku-20241022-v1:0
+    Description: AWS Bedrock model ID
+
+Resources:
+  # ============================================================
+  # COGNITO USER POOL - Authentication
+  # ============================================================
+  CareerAgentUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${Environment}-career-agent-users'
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: false
+        - Name: name
+          Required: true
+          Mutable: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+          - email
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  CareerAgentUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${Environment}-career-agent-client'
+      UserPoolId: !Ref CareerAgentUserPool
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+
+  # ============================================================
+  # DYNAMODB TABLES
+  # ============================================================
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-CareerAgentUsers'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-CareerAgentJobs'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: jobId
+          AttributeType: S
+        - AttributeName: source
+          AttributeType: S
+        - AttributeName: postedDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: jobId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: SourceDateIndex
+          KeySchema:
+            - AttributeName: source
+              KeyType: HASH
+            - AttributeName: postedDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  ApplicationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-CareerAgentApplications'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: applicationId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: appliedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: applicationId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: appliedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ============================================================
+  # S3 BUCKETS
+  # ============================================================
+  ResumesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-career-agent-resumes-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 90
+
+  # ============================================================
+  # IAM ROLES
+  # ============================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-CareerAgentLambdaRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt UsersTable.Arn
+                  - !GetAtt JobsTable.Arn
+                  - !GetAtt ApplicationsTable.Arn
+                  - !Sub '${UsersTable.Arn}/index/*'
+                  - !Sub '${JobsTable.Arn}/index/*'
+                  - !Sub '${ApplicationsTable.Arn}/index/*'
+        
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub '${ResumesBucket.Arn}/*'
+        
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
+        
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  # ============================================================
+  # LAMBDA FUNCTIONS
+  # ============================================================
+  CareerAgentAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-CareerAgentAPI'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          USERS_TABLE: !Ref UsersTable
+          JOBS_TABLE: !Ref JobsTable
+          APPLICATIONS_TABLE: !Ref ApplicationsTable
+          RESUMES_BUCKET: !Ref ResumesBucket
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({'message': 'Deploy actual code'})
+              }
+
+  # ============================================================
+  # API GATEWAY
+  # ============================================================
+  CareerAgentAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${Environment}-CareerAgentAPI'
+      Description: AI Career Agent Platform API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  APIAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      RestApiId: !Ref CareerAgentAPI
+      ProviderARNs:
+        - !GetAtt CareerAgentUserPool.Arn
+
+  # API Resources
+  JobsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CareerAgentAPI
+      ParentId: !GetAtt CareerAgentAPI.RootResourceId
+      PathPart: jobs
+
+  UsersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CareerAgentAPI
+      ParentId: !GetAtt CareerAgentAPI.RootResourceId
+      PathPart: users
+
+  ResumeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CareerAgentAPI
+      ParentId: !GetAtt CareerAgentAPI.RootResourceId
+      PathPart: resume
+
+  AIResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CareerAgentAPI
+      ParentId: !GetAtt CareerAgentAPI.RootResourceId
+      PathPart: ai
+
+  # API Methods
+  JobsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CareerAgentAPI
+      ResourceId: !Ref JobsResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref APIAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CareerAgentAPIFunction.Arn}/invocations'
+
+  # Lambda Permission for API Gateway
+  APIGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CareerAgentAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CareerAgentAPI}/*'
+
+  # API Deployment
+  APIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - JobsMethod
+    Properties:
+      RestApiId: !Ref CareerAgentAPI
+      StageName: !Ref Environment
+
+  # ============================================================
+  # CLOUDWATCH ALARMS
+  # ============================================================
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-CareerAgent-LambdaErrors'
+      AlarmDescription: Alert on Lambda function errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CareerAgentAPIFunction
+
+  # ============================================================
+  # OUTPUTS
+  # ============================================================
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CareerAgentUserPool
+    Export:
+      Name: !Sub '${Environment}-UserPoolId'
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref CareerAgentUserPoolClient
+    Export:
+      Name: !Sub '${Environment}-UserPoolClientId'
+
+  APIEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${CareerAgentAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-APIEndpoint'
+
+  UsersTableName:
+    Description: DynamoDB Users Table Name
+    Value: !Ref UsersTable
+
+  JobsTableName:
+    Description: DynamoDB Jobs Table Name
+    Value: !Ref JobsTable
+
+  ApplicationsTableName:
+    Description: DynamoDB Applications Table Name
+    Value: !Ref ApplicationsTable
+
+  ResumesBucketName:
+    Description: S3 Resumes Bucket Name
+    Value: !Ref ResumesBucket
+
+  LambdaFunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt CareerAgentAPIFunction.Arn

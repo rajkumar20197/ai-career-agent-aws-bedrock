@@ -1,0 +1,114 @@
+%% AI Career Agent Platform - Architecture Diagram
+%% For AWS AI Agent Global Hackathon Submission
+%% 
+%% To convert to image:
+%% 1. Visit https://mermaid.live/
+%% 2. Paste this code
+%% 3. Export as PNG or SVG
+%% 4. Save to /docs/architecture-diagram.png
+
+graph TB
+    subgraph "User Interface Layer"
+        A[React Frontend<br/>TypeScript + Tailwind CSS]
+        A1[Landing Page]
+        A2[Job Search Dashboard]
+        A3[Resume Optimizer]
+        A4[Market Intelligence]
+        A5[Gmail Integration]
+        A --> A1
+        A --> A2
+        A --> A3
+        A --> A4
+        A --> A5
+    end
+
+    subgraph "API Gateway Layer"
+        B[Amazon API Gateway<br/>REST API]
+        B1[Cognito Authorizer]
+        B2[Request Validation]
+        B3[Rate Limiting]
+        B --> B1
+        B --> B2
+        B --> B3
+    end
+
+    subgraph "Compute Layer - AWS Lambda"
+        C[Lambda Function<br/>Python 3.11]
+        C1[Main Handler<br/>index.py]
+        C2[Bedrock Integration<br/>bedrock_integration.py]
+        C --> C1
+        C --> C2
+    end
+
+    subgraph "AI/ML Layer - AWS Bedrock"
+        D[AWS Bedrock Runtime]
+        D1[Claude 3.5 Haiku<br/>Foundation Model]
+        D2[AI Agent Capabilities:<br/>- Job Matching<br/>- Resume Analysis<br/>- Career Planning<br/>- Market Insights]
+        D --> D1
+        D1 --> D2
+    end
+
+    subgraph "Data Layer"
+        E1[(DynamoDB<br/>Users Table)]
+        E2[(DynamoDB<br/>Jobs Table)]
+        E3[(DynamoDB<br/>Applications Table)]
+        E4[S3 Bucket<br/>Resume Storage]
+    end
+
+    subgraph "Authentication Layer"
+        F[Amazon Cognito<br/>User Pool]
+        F1[JWT Token<br/>Management]
+        F --> F1
+    end
+
+    subgraph "Monitoring & Logging"
+        G[Amazon CloudWatch]
+        G1[Logs]
+        G2[Metrics]
+        G3[Alarms]
+        G --> G1
+        G --> G2
+        G --> G3
+    end
+
+    subgraph "External Integrations"
+        H1[LinkedIn API<br/>Job Data]
+        H2[Indeed API<br/>Job Data]
+        H3[Gmail API<br/>Email Analysis]
+    end
+
+    %% Connections
+    A -->|HTTPS/TLS| B
+    B -->|Authorize| F
+    F -->|JWT Token| B
+    B -->|Lambda Proxy| C
+    
+    C -->|Invoke Model| D
+    C -->|Query/Put| E1
+    C -->|Query/Put| E2
+    C -->|Query/Put| E3
+    C -->|Upload/Get| E4
+    
+    C -->|Fetch Jobs| H1
+    C -->|Fetch Jobs| H2
+    C -->|Analyze Emails| H3
+    
+    C -->|Logs| G1
+    C -->|Metrics| G2
+    G2 -->|Trigger| G3
+
+    %% Styling
+    classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#232F3E
+    classDef ai fill:#5A67D8,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef frontend fill:#61DAFB,stroke:#232F3E,stroke-width:2px,color:#232F3E
+    classDef data fill:#3B82F6,stroke:#232F3E,stroke-width:2px,color:#fff
+    
+    class A,A1,A2,A3,A4,A5 frontend
+    class B,C,E1,E2,E3,E4,F,G aws
+    class D,D1,D2 ai
+    class H1,H2,H3 data
+
+    %% Notes
+    note1[AI Agent Features:<br/>✓ Autonomous decision-making<br/>✓ Reasoning with Claude 3.5<br/>✓ API/DB integration<br/>✓ Multi-tool orchestration]
+    
+    style note1 fill:#FEF3C7,stroke:#F59E0B,stroke-width:2px
